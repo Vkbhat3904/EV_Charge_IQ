@@ -7,6 +7,7 @@ A medallion-architecture data pipeline for Bangalore's public EV charging networ
 ```mermaid
 flowchart TD
     A[Open Charge Map API<br/>/v3/poi/ + /v3/referencedata/] -->|ingest_ocm.py<br/>requests| B
+    W[Open-Meteo API<br/>/v1/forecast, no key] -->|ingest_weather.py<br/>requests| B
     B[Bronze<br/>raw immutable JSON snapshots<br/>data/bronze/] -->|build_silver.py<br/>pandas| C
     C[Silver<br/>typed, deduplicated Parquet<br/>data/silver/] -->|build_gold.py<br/>DuckDB SQL| D
     D[Gold<br/>curated analytics Parquet<br/>data/gold/]
@@ -15,23 +16,24 @@ flowchart TD
 | Layer | Format | Contents |
 |---|---|---|
 | **Bronze** | JSON | Raw API responses, append-only, timestamped snapshots + reference/lookup data |
-| **Silver** | Parquet | `stations` (152 rows) and `connections` (266 rows) — typed, deduplicated, provenance-tracked |
-| **Gold** | Parquet | `fast_charger_coverage`, `power_tier_distribution`, `connector_mix` |
+| **Silver** | Parquet | `stations` (152 rows), `connections` (266 rows), `weather` (hourly, UTC) — typed, deduplicated, provenance-tracked |
+| **Gold** | Parquet | `fast_charger_coverage`, `power_tier_distribution`, `connector_mix`, `weather_daily` |
 
 ## Key findings
 
-From the 2026-08-31 snapshot (152 stations, 266 connectors, via Open Charge Map):
+From the 2026-08-31 snapshot (152 stations, 266 connectors, via Open Charge Map; weather via Open-Meteo):
 
 - **54.6% of stations are fast chargers (≥50 kW)** — 30.3% standard (11–49 kW), 13.2% slow (<11 kW), 2% unknown
 - **CCS (Type 2) dominates the connector mix**: 173 of 266 connectors (65%), followed by IEC 60309 3-pin (30) and tethered Type 2 (29); CHAdeMO is fading (10), GB/T present (6)
 - **Fast-charging leadership**: Statiq 21/25 stations fast, JIO BP Pulse 19/19 (100%), Shell Recharge 16/19 — while Tata Power skews slow (5/22 fast)
 - **Data gaps, quantified**: 30 stations (20%) have no known operator, 15 connectors (5.6%) have unknown type, 3 stations lack power data
+- **Monsoon signal present**: 7 mm of rain across 3 observed days (Aug 29–31, 2026) — the weather regressor for demand forecasting is flowing end-to-end
 
-> **Data provenance**: All data comes from [Open Charge Map](https://openchargemap.org) (ODbL license), filtered to the Bangalore bounding box. This reflects what OCM's community-fed database contains — not an official or complete registry of Bangalore's charging network.
+> **Data provenance**: Station data comes from [Open Charge Map](https://openchargemap.org) (ODbL license), filtered to the Bangalore bounding box — it reflects what OCM's community-fed database contains, not an official or complete registry. Weather data comes from [Open-Meteo](https://open-meteo.com) for Bangalore coordinates (lat 12.9716, lon 77.5946).
 
 ## How to run
 
-Prerequisites: Python 3.11+, a free [OCM API key](https://openchargemap.org/site/develop/api).
+Prerequisites: Python 3.11+, a free [OCM API key](https://openchargemap.org/site/develop/api). The Open-Meteo weather source needs no key.
 
 ```powershell
 # 1. Clone and set up
@@ -49,9 +51,10 @@ $env:OCM_API_KEY = "your-key-here"
 .venv\Scripts\python.exe src\run_pipeline.py
 
 # Or run stages individually:
-.venv\Scripts\python.exe src\ingest_ocm.py    # API -> Bronze
-.venv\Scripts\python.exe src\build_silver.py  # Bronze -> Silver
-.venv\Scripts\python.exe src\build_gold.py    # Silver -> Gold
+.venv\Scripts\python.exe src\ingest_ocm.py      # OCM API -> Bronze (stations + reference data)
+.venv\Scripts\python.exe src\ingest_weather.py  # Open-Meteo API -> Bronze (hourly weather)
+.venv\Scripts\python.exe src\build_silver.py    # Bronze -> Silver
+.venv\Scripts\python.exe src\build_gold.py      # Silver -> Gold
 ```
 
 **Windows note**: set `PYTHONUTF8=1` if console output fails with a `UnicodeEncodeError` (connector names contain non-ASCII characters).
@@ -61,10 +64,11 @@ $env:OCM_API_KEY = "your-key-here"
 ```text
 EV_charging_project/
 ├── src/
-│   ├── ingest_ocm.py     # OCM API -> Bronze (stations + reference data)
-│   ├── build_silver.py   # Bronze -> Silver (clean, type, dedup, join, provenance)
-│   ├── build_gold.py     # Silver -> Gold (DuckDB analytics queries)
-│   └── run_pipeline.py   # runs all three stages in order, stops on failure
+│   ├── ingest_ocm.py      # OCM API -> Bronze (stations + reference data)
+│   ├── ingest_weather.py  # Open-Meteo API -> Bronze (hourly Bangalore weather)
+│   ├── build_silver.py    # Bronze -> Silver (clean, type, dedup, join, provenance)
+│   ├── build_gold.py      # Silver -> Gold (DuckDB analytics queries)
+│   └── run_pipeline.py    # runs all four stages in order, stops on failure
 ├── data/
 │   ├── bronze/           # raw JSON snapshots (gitignored)
 │   ├── silver/           # typed Parquet tables (gitignored)
@@ -91,9 +95,10 @@ See [design_notes/silver_schema.md](design_notes/silver_schema.md) for the full 
 
 Deliberately scoped — each tool is added only when the current pipeline's pain justifies it:
 
-1. **Runner script** — one command for the full pipeline (before any orchestrator)
+1. ~~**Runner script** — one command for the full pipeline~~ ✅ done (`src/run_pipeline.py`)
 2. **Serving layer** — expose Gold tables to downstream analytics/ML projects
 3. **Object storage (MinIO)** — replace local `data/` directories
 4. **Orchestration (Airflow)** — scheduled refreshes
 5. **Transformations (dbt)** — replace hand-written Silver/Gold SQL
 6. **Streaming, CI/CD, monitoring** — synthetic session simulator, Kafka/Spark, GitHub Actions
+
