@@ -42,5 +42,23 @@ def main():
 
     print(f"Saved {len(stations)} stations to {out_path}")
 
+
+REFERENCE_URL = "https://api.openchargemap.io/v3/referencedata/"
+
+def fetch_reference_data():
+    api_key = os.environ["OCM_API_KEY"]
+    headers = {"x-api-key": api_key}
+    params = {"output": "json", "verbose": "false"}
+    resp = requests.get(REFERENCE_URL, params=params, headers=headers, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+
+    out_path = Path("data/bronze/ocm_reference_data.json")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    print(f"Saved reference data to {out_path}")
+
 if __name__ == "__main__":
     main()
+    fetch_reference_data()
+
