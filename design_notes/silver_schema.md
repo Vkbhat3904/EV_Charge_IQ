@@ -152,3 +152,66 @@ Questions the design must survive (all answered by the built tables):
 3. **"What happens to the zero-connector station?"** — it survives in
    `stations` with `n_connectors = NA`, `max_power_kw = NA`:
    present but honest. Verified: exactly 1 such row.
+
+---
+
+## 7. Weather Table (added with Open-Meteo source)
+
+> Source: Open-Meteo `/v1/forecast` — hourly Bangalore weather
+> (lat 12.9716, lon 77.5946), no API key required.
+> Verified by probe call: `hourly` dict of parallel arrays
+> (`time`, `temperature_2m` °C, `precipitation` mm, `relative_humidity_2m` %),
+> 72 hourly steps per fetch (`past_days=2, forecast_days=1`).
+
+### 7.1 Schema
+
+| Column | Type | Notes |
+|---|---|---|
+| `time_utc` | timestamp | **Converted from IST to UTC** — see §7.3 |
+| `temperature_c` | float, nullable | |
+| `precipitation_mm` | float, nullable | |
+| `humidity_pct` | float, nullable | |
+| `source_file` | text | Provenance — bronze weather filename |
+| `loaded_at_utc` | timestamp | Provenance — Silver build time |
+
+### 7.2 Primary key and dedup rule
+
+Weather is a **time series**, not a snapshot — the primary key is
+`time_utc` (one row per hour). New fetches overlap old ones (today's
+fetch re-includes yesterday's hours), so dedup is required.
+
+**Rule: when two Bronze snapshots contain the same hour, the LATEST
+snapshot wins.**
+
+Justification: Open-Meteo can revise past observations (quality
+corrections, late-arriving station data). The most recent fetch carries
+the API's most corrected view of any given hour. The alternative —
+earliest-wins, "closest to the observation" — would freeze any
+initial errors into Silver forever. We accept that a revision can
+change a historical row; provenance (`source_file`) records which
+snapshot each row came from, so any change is traceable.
+
+### 7.3 Timezone decision
+
+The API is queried with `timezone=Asia/Kolkata`, so Bronze timestamps
+are IST. Silver stores `time_utc` — converted to UTC — because:
+
+- Every other timestamp in the platform is UTC (`loaded_at_utc`,
+  OCM `DateLastStatusUpdate`)
+- Mixing timezones in joins silently corrupts results (an IST hour
+  joined to a UTC hour is 5.5 hours wrong — enough to turn a
+  charging peak into a trough)
+- UTC is the storage standard; IST is a *presentation* concern,
+  handled at the dashboard/API layer later
+
+Conversion: subtract 5 hours 30 minutes (IST = UTC+5:30, no DST).
+
+### 7.4 Implementation notes
+
+- Bronze stores *parallel arrays* (`data["hourly"]`), not rows.
+  `pd.DataFrame(data["hourly"])` converts them to one row per hour.
+- Merge across snapshots: concatenate all Bronze weather files, then
+  apply the dedup rule (sort by `loaded_at_utc`, keep last per
+  `time_utc`).
+- Row count check: each snapshot contributes 72 hours; after dedup,
+  total rows = distinct hours covered across all snapshots.

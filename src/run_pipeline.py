@@ -3,6 +3,7 @@ import sys
 
 STAGES = [
     "src/ingest_ocm.py",
+    "src/ingest_weather.py",
     "src/build_silver.py",
     "src/build_gold.py",
 ]

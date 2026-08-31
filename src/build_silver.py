@@ -45,6 +45,51 @@ def build_connections(raw: list[dict], source_file: str) -> pd.DataFrame:
             })
     return pd.DataFrame(rows)
 
+def build_weather() -> pd.DataFrame:
+    weather_files = sorted(BRONZE_DIR.glob("openmeteo_blr_weather_*.json"))
+    if not weather_files:
+        raise FileNotFoundError("No bronze weather files — run ingest_weather.py first")
+
+    frames = []
+    for wf in weather_files:
+        data = json.loads(wf.read_text(encoding="utf-8"))
+        df = pd.DataFrame(data["hourly"])          # parallel arrays -> rows
+        df["source_file"] = wf.name
+        # fetch time parsed from filename (e.g. ...20260831T101402Z.json)
+        ts = wf.name.split("_")[-1].removesuffix(".json")
+        fetched_at = datetime.strptime(ts, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        df["loaded_at_utc"] = fetched_at
+
+        frames.append(df)
+
+    weather = pd.concat(frames, ignore_index=True)
+
+    # rename to schema names (design note §7.1)
+    weather = weather.rename(columns={
+        "temperature_2m": "temperature_c",
+        "precipitation": "precipitation_mm",
+        "relative_humidity_2m": "humidity_pct",
+    })
+
+    # IST -> UTC (design note §7.3): Bronze 'time' is naive IST
+    weather["time_utc"] = (pd.to_datetime(weather["time"])
+                           - pd.Timedelta(hours=5, minutes=30))
+    weather["time_utc"] = weather["time_utc"].dt.tz_localize("UTC")
+
+    # dedup per §7.2: latest fetch wins — stable sort so ties keep input order
+    weather = (weather
+               .sort_values("loaded_at_utc", kind="stable")
+               .drop_duplicates("time_utc", keep="last")
+               .sort_values("time_utc")            # store chronologically
+               .reset_index(drop=True))
+
+
+    # final schema order
+    weather = weather[["time_utc", "temperature_c", "precipitation_mm",
+                       "humidity_pct", "source_file", "loaded_at_utc"]]
+    return weather
+
+
 def main():
     snap = latest_snapshot_path()
     raw = json.loads(snap.read_text(encoding="utf-8"))
@@ -79,6 +124,11 @@ def main():
     stations.to_parquet(SILVER_DIR / "stations.parquet", index=False)
     conns.to_parquet(SILVER_DIR / "connections.parquet", index=False)
     print(f"stations: {len(stations)} rows, connections: {len(conns)} rows -> {SILVER_DIR}")
+    weather = build_weather()
+
+    weather.to_parquet(SILVER_DIR / "weather.parquet", index=False)
+    print(f"weather: {len(weather)} rows -> {SILVER_DIR}")
+
 
 if __name__ == "__main__":
     main()
