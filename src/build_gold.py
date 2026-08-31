@@ -57,8 +57,25 @@ def main():
         ORDER BY n_connectors DESC
     """)
     mix.write_parquet(str(GOLD_DIR / "connector_mix.parquet"))
-    
     mix.show()
+
+        # Gold table 4: daily weather aggregates (IST days — see design note §8)
+    con.execute("SET TimeZone = 'Asia/Kolkata'")   # explicit, machine-independent
+    weather_daily = con.sql("""
+        SELECT
+            CAST(time_utc AS DATE) AS date_ist,
+            COUNT(*) AS n_hours,
+            ROUND(AVG(temperature_c), 1) AS mean_temp_c,
+            ROUND(MAX(temperature_c), 1) AS max_temp_c,
+            ROUND(SUM(precipitation_mm), 2) AS total_precipitation_mm,
+            ROUND(AVG(humidity_pct), 1) AS mean_humidity_pct
+        FROM 'data/silver/weather.parquet'
+        GROUP BY date_ist
+        ORDER BY date_ist
+    """)
+
+    weather_daily.write_parquet(str(GOLD_DIR / "weather_daily.parquet"))
+    weather_daily.show()
 
 if __name__ == "__main__":
     main()

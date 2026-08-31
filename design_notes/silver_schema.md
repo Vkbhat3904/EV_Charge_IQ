@@ -215,3 +215,43 @@ Conversion: subtract 5 hours 30 minutes (IST = UTC+5:30, no DST).
   `time_utc`).
 - Row count check: each snapshot contributes 72 hours; after dedup,
   total rows = distinct hours covered across all snapshots.
+
+---
+
+## 8. Weather Daily Grain (Gold layer)
+
+> Gold table `weather_daily` — daily aggregates of the Silver weather
+> series, built in `src/build_gold.py`.
+
+### 8.1 Grain
+
+One row per **IST calendar day**. Hourly data serves forecasting
+regressors; daily aggregates serve dashboards and any future
+daily-grain demand analysis. Grains are never mixed silently.
+
+### 8.2 Day-definition decision: IST days, not UTC days
+
+`time_utc` is stored in UTC, but a "day" in this analysis means a
+Bangalore day. Grouping by UTC date would split Bangalore evenings
+(IST 18:00–23:59 = UTC 12:30–18:29) across two meaningless UTC
+"days". Grouping by IST date makes each row a real Bangalore day.
+
+The conversion happens inside the grouping expression:
+`CAST(time_utc + INTERVAL 5 HOUR + INTERVAL 30 MINUTE AS DATE)`.
+Storage stays UTC (§7.3); analysis converts at the boundary — the
+standard store-UTC / analyze-local pattern.
+
+### 8.3 Aggregation choices
+
+- `SUM(precipitation_mm)` — precipitation adds up (total mm fallen)
+- `AVG(temperature_c)`, `AVG(humidity_pct)` — these average
+- `MAX(temperature_c)` — the day's peak, useful for heat-stress signals
+- `COUNT(*) AS n_hours` — the honesty column: a complete day has 24;
+  partial days (window edges) show fewer, so consumers can see which
+  daily averages are trustworthy
+
+### 8.4 Verification
+
+- First/last days of the window show `n_hours < 24`; middle days 24
+- One day's `total_precipitation_mm` hand-checked against the sum of
+  its hourly Silver rows — must match exactly
