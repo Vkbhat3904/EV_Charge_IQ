@@ -95,7 +95,7 @@ See [design_notes/silver_schema.md](design_notes/silver_schema.md) for the full 
 
 Deliberately scoped — each tool is added only when the current pipeline's pain justifies it:
 
-1. ~~**Runner script** — one command for the full pipeline~~ ✅ done (`src/run_pipeline.py`)
+1. **Runner script** — one command for the full pipeline
 2. **Serving layer** — expose Gold tables to downstream analytics/ML projects
 3. **Object storage (MinIO)** — replace local `data/` directories
 4. **Orchestration (Airflow)** — scheduled refreshes
