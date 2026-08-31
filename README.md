@@ -45,7 +45,10 @@ pip install -r requirements.txt
 $env:OCM_API_KEY = "your-key-here"
 # cmd syntax:      set OCM_API_KEY=your-key-here
 
-# 3. Run the pipeline in order
+# 3. Run the full pipeline (ingest -> silver -> gold, stops on first failure)
+.venv\Scripts\python.exe src\run_pipeline.py
+
+# Or run stages individually:
 .venv\Scripts\python.exe src\ingest_ocm.py    # API -> Bronze
 .venv\Scripts\python.exe src\build_silver.py  # Bronze -> Silver
 .venv\Scripts\python.exe src\build_gold.py    # Silver -> Gold
@@ -60,7 +63,8 @@ EV_charging_project/
 ├── src/
 │   ├── ingest_ocm.py     # OCM API -> Bronze (stations + reference data)
 │   ├── build_silver.py   # Bronze -> Silver (clean, type, dedup, join, provenance)
-│   └── build_gold.py     # Silver -> Gold (DuckDB analytics queries)
+│   ├── build_gold.py     # Silver -> Gold (DuckDB analytics queries)
+│   └── run_pipeline.py   # runs all three stages in order, stops on failure
 ├── data/
 │   ├── bronze/           # raw JSON snapshots (gitignored)
 │   ├── silver/           # typed Parquet tables (gitignored)
